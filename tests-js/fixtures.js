@@ -1,0 +1,2 @@
+import {GRADER_VERSION} from '../static/grader.js';
+export function problem(){return {id:'p1',size:9,board:Array.from({length:9},()=>Array(9).fill(0)),groups:[],to_play:'W',black_rank:'20k',white_rank:'3d',speed:'live',legal_moves:['D4','E5','pass'],analysis:{score:-4,ownership:Array(81).fill(0),model:'test',visits:200,grader_version:GRADER_VERSION,candidates:{D4:{move:'D4',score:-4,visits:200,pv:[]},E5:{move:'E5',score:-3,visits:200,pv:[]}},suggestions:[],complete:false}};}

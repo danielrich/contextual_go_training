@@ -1,0 +1,25 @@
+[Unit]
+Description=Whole Board contextual Go training
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=@USER@
+Group=@GROUP@
+WorkingDirectory=/opt/whole-board
+EnvironmentFile=/etc/whole-board/whole-board.env
+ExecStart=/opt/whole-board/bin/whole-board serve
+Restart=on-failure
+RestartSec=3
+TimeoutStopSec=20
+StateDirectory=whole-board
+UMask=0027
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/var/lib/whole-board
+
+[Install]
+WantedBy=multi-user.target

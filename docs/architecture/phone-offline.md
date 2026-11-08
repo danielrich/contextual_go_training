@@ -1,12 +1,12 @@
-# Proposed server daemon and offline phone practice
+# Server daemon and offline phone practice
 
-Status: architecture proposal, 2026-11-08. No daemon deployment or Rust migration has been performed. The current Python app remains the working reference.
+Status: implemented and validated in isolated local/Linux runs, 2026-11-08. Rust is the current backend; Python remains a reference. Production service installation and physical-phone installation are deployment steps. See README.md for commands.
 
 ## Deployment
 
 Use the same pattern as the existing Chinese Reader: Rust/Axum serving the browser app and API, supervised by systemd, with HTTPS and an installable PWA manifest. Give Go its own origin (for example a separate HTTPS port) so its service worker and browser storage are independent of Chinese Reader. Inspect the host's actual deployment configuration before choosing the port or TLS arrangement.
 
-Keep the archive, corpus index, KataGo process and authoritative synced attempts on the training server. Read the full JSON archive as a stream, preserving all raw records. Do not load the complete corpus into the current Store.games() interface. Introduce a disk-backed corpus index or sharded materialization before using the full archive in production. Record-specific limitations belong in metadata and problem eligibility; do not delete archival records.
+Keep the archive, corpus index, KataGo process and authoritative synced attempts on the training server. Read the full JSON archive as a stream, preserving all raw records. Do not load the complete corpus into the current Store.games() interface. The Rust implementation uses a disk-backed SQLite corpus/cohort index. Record-specific limitations belong in metadata and problem eligibility; do not delete archival records.
 
 ## Practice packs
 
@@ -32,6 +32,6 @@ Cache the app shell with a service worker. Store packs, in-progress sessions, re
 
 Generate attempt IDs on the device. Sync on app opening, focus and successful server reachability, with a manual retry action; background sync is an additional opportunity rather than the only mechanism. Server inserts must be idempotent by attempt ID. Keep submitted answers and grading versions immutable, and distinguish pending grading from completed grading. Update problems by version without invalidating work in progress. Multiple devices merge attempts instead of overwriting each other's counters.
 
-## First implementation milestone
+## Validation milestone
 
 One phone-installable PWA, one supervised daemon, and one 25-problem pack that supports the existing question flow in airplane mode. Verify a cold offline launch, interrupted pack download, offline app closure/reopening, queued attempts across restart, repeated sync, pass candidates, late endgame, and unchanged rank-separated results after reconnecting. Benchmark full candidate-map preparation before committing to a pack-generation latency target.

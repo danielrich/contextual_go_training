@@ -1,0 +1,35 @@
+use serde_json::json;
+use whole_board::{grade, model::*};
+fn problem() -> Problem {
+    serde_json::from_value(json!({"id":"p","size":9,"board":vec![vec![0;9];9],"turn":1,"to_play":"W","komi":6.5,"rules":"japanese","source":"test","source_url":"","source_game_id":"g","black":"a","white":"b","black_rank":"20k","white_rank":"3d","rank_provenance":"fixture","date":"","speed":"live","handicap":0,"sample":false,"last_move":null,"groups":[],"legal_moves":["D4","E5","pass"],"analysis":{"score":-4.,"ownership":vec![0.;81],"model":"m","visits":200,"grader_version":grade::VERSION,"candidates":{"D4":{"move":"D4","score":-4.,"visits":200,"pv":["D4"]},"E5":{"move":"E5","score":-3.,"visits":200,"pv":[]}},"suggestions":[],"complete":false}})).unwrap()
+}
+#[test]
+fn arbitrary_legal_candidates_can_be_pending_but_never_wrong_by_omission() {
+    let p = problem();
+    let f = grade::grade(&p, "candidates", &json!(["D4", "E5", "pass"])).unwrap();
+    assert_eq!(f["pending"], true);
+    assert!(f["correct"].is_null());
+}
+#[test]
+fn score_loss_uses_white_perspective() {
+    assert_eq!(grade::candidate_loss(-4., -1., "W"), 3.);
+    assert_eq!(grade::candidate_loss(4., 1., "B"), 3.);
+}
+#[test]
+fn duplicate_or_illegal_candidates_are_rejected() {
+    let p = problem();
+    assert!(grade::grade(&p, "candidates", &json!(["D4", "D4", "pass"])).is_err());
+    assert!(grade::grade(&p, "candidates", &json!(["A9", "E5", "pass"])).is_err());
+}
+#[test]
+fn score_tolerance_and_winner_match_original_flow() {
+    let p = problem();
+    assert_eq!(
+        grade::grade(&p, "winner", &json!("W")).unwrap()["correct"],
+        true
+    );
+    assert_eq!(
+        grade::grade(&p, "score", &json!(-1.)).unwrap()["correct"],
+        true
+    );
+}

@@ -3,3 +3,17 @@ data/*
 !data/.gitkeep
 *.log
 .DS_Store
+/target/
+*.pem
+*.key
+.env
+/dist/
+/node_modules/
+.playwright/
+*.sqlite
+*.sqlite-*
+*.db
+*.db-*
+*.bundle
+*.tar.gz
+*.json.gz
