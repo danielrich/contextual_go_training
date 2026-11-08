@@ -64,3 +64,17 @@ Files: deploy/whole-board.service, deploy/whole-board.env.example, scripts/{inst
 - Engine reference lines preview on the board via hover/focus or tap/click, with numbered alternating stones, capture/pass replay, stepping and original-position restoration. Replays never mutate the problem.
 - A focused independent review caught an unpinned-preview restoration issue when leaving its controls; restoration handlers were added. Isolated browser verification covered step playback, focus restoration and pass numbering.
 - Native Linux HTTPS passed health/PWA asset checks using an explicitly trusted temporary test certificate. Rendered systemd unit passed systemd-analyze verify.
+
+## Deployment refinements
+
+- Candidate grader v2: strict loss <2 for every move OR engine-top-move inclusion earns set credit; track >5 and >10 losses independently of set credit. Legacy queued v1 submissions remain accepted with their original grading.
+- Aggregate by rounded mean rank across the continuous kyu/dan ladder, with stronger-rank tie breaking and Unknown when either rank cannot be parsed.
+- Review mistakes reopens submitted problem references. Local and server duplicate checks route repeated positions to separate review metrics; review never increases first-time accuracy.
+- Installed a separate whole-board systemd service on HTTPS 8443 using the existing certificate. Chinese Reader remains active on 443. Production indexing starts with 50,000 raw archive records; full indexing is not claimed.
+
+## Final responsiveness and review verification
+
+- 23 Rust tests, 24 JavaScript tests, and 30 Python reference tests pass.
+- Browser verification confirmed mean-rank grouping, blunder/serious-blunder counts, engine-top-hit counts, reopening a mistake, and review answers staying out of first-time statistics.
+- Review fixes include Unicode-rank safety, automatic local repeat classification, and server session-aware repeat classification across question types. Original-session questions remain first-time; later sessions are reviews.
+- Measured initial GPU warm-up of 54 seconds, warmed API status of 0.40 seconds, and warmed fresh 9×9 preparation of 4.05 seconds. Startup now proactively warms the engine and keeps two root-analyzed live positions per board size. Claims are atomic and model-specific.

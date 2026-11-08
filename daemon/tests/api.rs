@@ -61,7 +61,7 @@ async fn server_regrades_answers_and_repeated_sync_is_idempotent() {
     assert_eq!(one["progress"]["total"], 1);
     let two = post(s.clone(), body).await;
     assert_eq!(two["progress"]["total"], 1);
-    assert_eq!(two["progress"]["breakdown"][0]["rank"], "20k/3d");
+    assert_eq!(two["progress"]["breakdown"][0]["rank"], "9k");
     let mut changed = attempt;
     changed["answer"] = json!("W");
     let three = post(s.clone(), json!({"attempts":[changed]})).await;
@@ -154,6 +154,8 @@ fn progress_measures_each_evaluated_candidate_loss_by_source_ranks() {
         reasoning: String::new(),
         created: 1700000000,
         grader_version: whole_board::grade::VERSION.into(),
+        review: false,
+        session_id: String::new(),
     };
     let f = serde_json::json!({"correct":false,"pending":false,"candidates":[{"loss":0.0,"correct":true},{"loss":1.5,"correct":true},{"loss":7.5,"correct":false}]});
     db.record_attempt(&a, &p, &f).unwrap();
@@ -167,6 +169,62 @@ fn progress_measures_each_evaluated_candidate_loss_by_source_ranks() {
     assert_eq!(q["total_moves"], 3);
     assert_eq!(q["sound_moves"], 2);
     assert_eq!(q["average_loss"], 3.0);
-    assert_eq!(q["breakdown"][0]["black_rank"], p.black_rank);
+    assert_eq!(q["breakdown"][0]["rank"], "9k");
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn repeated_positions_only_contribute_to_review_accuracy() {
+    let (dir, s) = setup();
+    let p = saved();
+    s.db.save_problem(&p).unwrap();
+    let a:Attempt=serde_json::from_value(json!({"id":"first-view","problem_id":"p1","stage":"winner","answer":"W","created":1700000000,"grader_version":grade::VERSION})).unwrap();
+    s.db.record_attempt(&a, &p.problem, &json!({"correct":false}))
+        .unwrap();
+    let b:Attempt=serde_json::from_value(json!({"id":"second-view","problem_id":"p1","stage":"winner","answer":"W","created":1700000001,"grader_version":grade::VERSION})).unwrap();
+    s.db.record_attempt(&b, &p.problem, &json!({"correct":true}))
+        .unwrap();
+    let progress = s.db.progress().unwrap();
+    assert_eq!(progress["total"], 1);
+    assert_eq!(progress["review"]["total"], 1);
+    assert_eq!(progress["skills"]["winner"]["correct"], 0);
+    assert_eq!(
+        s.db.review_positions().unwrap().as_array().unwrap().len(),
+        1
+    );
+    drop(s);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn prepared_positions_are_claimed_once_and_match_engine_identity() {
+    let (dir, s) = setup();
+    let p = saved();
+    s.db.save_problem(&p).unwrap();
+    s.db.queue_ready(&p).unwrap();
+    assert_eq!(s.db.ready_count(9, "live", "test").unwrap(), 1);
+    assert!(s.db.take_ready(9, "live", "other").unwrap().is_none());
+    assert!(s.db.take_ready(9, "all", "test").unwrap().is_some());
+    assert!(s.db.take_ready(9, "live", "test").unwrap().is_none());
+    drop(s);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[test]
+fn first_session_questions_stay_main_but_a_later_session_is_entirely_review() {
+    let (dir, s) = setup();
+    let p = saved();
+    s.db.save_problem(&p).unwrap();
+    for (id, session, stage) in [
+        ("one", "original", "winner"),
+        ("two", "original", "score"),
+        ("three", "revisit", "candidates"),
+    ] {
+        let a:Attempt=serde_json::from_value(json!({"id":id,"session_id":session,"problem_id":"p1","stage":stage,"answer":"W","created":1700000000,"grader_version":grade::VERSION})).unwrap();
+        s.db.record_attempt(&a, &p.problem, &json!({"correct":true}))
+            .unwrap();
+    }
+    let p = s.db.progress().unwrap();
+    assert_eq!(p["total"], 2);
+    assert_eq!(p["review"]["total"], 1);
+    drop(s);
     std::fs::remove_dir_all(dir).unwrap();
 }

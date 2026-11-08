@@ -150,6 +150,10 @@ async fn run() -> Result<()> {
         return Err("Static directory must contain index.html".into());
     }
     let app = http::router(service.clone(), assets);
+    let prefetch = service.clone();
+    tokio::spawn(async move {
+        prefetch.prefetch().await;
+    });
     let worker = service.clone();
     tokio::spawn(async move {
         worker.worker().await;

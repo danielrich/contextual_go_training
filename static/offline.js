@@ -1,4 +1,4 @@
-import {validCompleteProblem,STAGES} from './grader.js';
+import {validCompleteProblem,STAGES,meanRank} from './grader.js';
 const EMPTY=()=>({total:0,skills:Object.fromEntries(STAGES.map(s=>[s,{total:0,correct:0}])),breakdown:[],recent:[]});
 const request=r=>new Promise((resolve,reject)=>{r.onsuccess=()=>resolve(r.result);r.onerror=()=>reject(r.error);});
 export function createStore(name='whole-board-v2'){
@@ -27,9 +27,15 @@ export function createStore(name='whole-board-v2'){
  async function activeSession(){const id=await meta('active-session');if(!id)return null;const s=await get('sessions',id);if(!s)return null;for(const result of Object.values(s.results||{})){const confirmed=await get('attempts',result.attempt_id);if(confirmed)result.feedback=confirmed.feedback;}const current=s.results?.[STAGES[s.stage]];if(current)s.feedback=current.feedback;return s;}
  async function recordAnswer(session,attempt,preview){
   const p=await get('problems',attempt.problem_id);if(!p)throw new Error('Problem has not been saved on this device.');
-  await transaction(['sessions','outbox','meta'],'readwrite',async tx=>{
+  await transaction(['sessions','outbox','attempts','meta'],'readwrite',async tx=>{
    const out=tx.objectStore('outbox');const old=await request(out.get(attempt.id));
-   if(old&&JSON.stringify(old.attempt)!==JSON.stringify(attempt))throw new Error('Attempt ID is already used by another answer.');
+   const comparable=a=>JSON.stringify({...a,review:false});
+   if(old&&comparable(old.attempt)!==comparable(attempt))throw new Error('Attempt ID is already used by another answer.');
+   const positionKey=[p.source_game_id||p.id,p.turn,p.size,p.to_play].join(':');
+   const prior=await request(tx.objectStore('sessions').getAll());
+   const repeated=prior.some(s=>s.id!==session.id&&(s.problem_id===p.id||s.position_key===positionKey));
+   const review=old?.attempt.review??(attempt.review===true||session.review===true||repeated);
+   attempt={...attempt,review};preview={...preview,review};session={...session,review,position_key:positionKey};
    session={...session,feedback:preview,results:{...(session.results||{}),[attempt.stage]:{attempt_id:attempt.id,answer:attempt.answer,feedback:preview}},updated:Date.now()};
    await request(tx.objectStore('sessions').put(session));
    await request(out.put({id:attempt.id,attempt,session_id:session.id,preview,source:{size:p.size,black_rank:p.black_rank,white_rank:p.white_rank},sync_error:null}));
@@ -40,22 +46,24 @@ export function createStore(name='whole-board-v2'){
  async function progress(){
   return transaction(['meta','outbox'],'readonly',async tx=>{
    const row=await request(tx.objectStore('meta').get('server-progress'));const result=structuredClone(row?.value||EMPTY());
-   result.candidate_quality||={total_moves:0,total_loss:0,sound_moves:0,average_loss:null,breakdown:[]};
+   result.review||=EMPTY();
+   for(const view of [result,result.review])view.candidate_quality={blunders:0,serious_blunders:0,total_sets:0,top_move_hits:0,total_moves:0,total_loss:0,sound_moves:0,average_loss:null,breakdown:[],...view.candidate_quality};
    const out=await request(tx.objectStore('outbox').getAll());result.pending_sync=out.length;result.pending_analysis=0;
-   for(const entry of out){const f=entry.preview;if(f.pending||typeof f.correct!=='boolean'){result.pending_analysis++;continue;}
+   for(const entry of out){const f=entry.preview,target=(f.review??entry.attempt.review)?result.review:result;if(f.pending||typeof f.correct!=='boolean'){result.pending_analysis++;continue;}
     if(entry.attempt.stage==='candidates'){
-     const q=result.candidate_quality,rank=`${entry.source.black_rank}/${entry.source.white_rank}`;
-     for(const move of f.candidates||[]){if(!Number.isFinite(move.loss)||move.loss<0)continue;
-      let row=q.breakdown.find(r=>r.size===entry.source.size&&r.rank===rank);if(!row){row={...entry.source,rank,total_moves:0,total_loss:0,sound_moves:0,average_loss:null};q.breakdown.push(row);}
-      for(const target of [q,row]){target.total_moves++;target.total_loss+=move.loss;target.sound_moves+=Number(move.correct===true);target.average_loss=target.total_loss/target.total_moves;}
+     const q=target.candidate_quality,rank=meanRank(entry.source.black_rank,entry.source.white_rank);
+     const moves=(f.candidates||[]).filter(m=>Number.isFinite(m.loss)&&m.loss>=0);
+     if(moves.length){let row=q.breakdown.find(r=>r.size===entry.source.size&&r.rank===rank);if(!row){row={...entry.source,rank,total_moves:0,total_loss:0,sound_moves:0,average_loss:null};q.breakdown.push(row);}
+      for(const target of [q,row]){target.total_sets=(target.total_sets||0)+1;target.top_move_hits=(target.top_move_hits||0)+Number(f.engine_top_hit??moves.some(m=>m.move&&m.move===f.suggestions?.[0]?.move));target.blunders||=0;target.serious_blunders||=0;}
+      for(const move of moves)for(const target of [q,row]){target.total_moves++;target.total_loss+=move.loss;target.sound_moves+=Number(move.loss<2);target.blunders+=Number(move.loss>5);target.serious_blunders+=Number(move.loss>10);target.average_loss=target.total_loss/target.total_moves;}
      }
     }
-    result.total++;const skill=result.skills[entry.attempt.stage]||(result.skills[entry.attempt.stage]={total:0,correct:0});skill.total++;skill.correct+=Number(f.correct);
-    const rank=`${entry.source.black_rank}/${entry.source.white_rank}`;let group=result.breakdown.find(r=>r.stage===entry.attempt.stage&&r.size===entry.source.size&&r.rank===rank);
-    if(!group){group={stage:entry.attempt.stage,size:entry.source.size,rank,total:0,correct:0};result.breakdown.push(group);}group.total++;group.correct+=Number(f.correct);
-    result.recent.unshift({stage:entry.attempt.stage,size:entry.source.size,correct:f.correct,created:entry.attempt.created,local:true});
+    target.total++;const skill=target.skills[entry.attempt.stage]||(target.skills[entry.attempt.stage]={total:0,correct:0});skill.total++;skill.correct+=Number(f.correct);
+    const rank=meanRank(entry.source.black_rank,entry.source.white_rank);let group=target.breakdown.find(r=>r.stage===entry.attempt.stage&&r.size===entry.source.size&&r.rank===rank);
+    if(!group){group={stage:entry.attempt.stage,size:entry.source.size,rank,total:0,correct:0};target.breakdown.push(group);}group.total++;group.correct+=Number(f.correct);
+    target.recent.unshift({stage:entry.attempt.stage,size:entry.source.size,correct:f.correct,created:entry.attempt.created,local:true});
    }
-   result.recent=result.recent.slice(0,12);return result;
+   result.recent=result.recent.slice(0,12);result.review.recent=result.review.recent.slice(0,12);return result;
   });
  }
  async function acceptSync(response,sent){

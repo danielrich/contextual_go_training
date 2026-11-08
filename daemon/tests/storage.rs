@@ -95,10 +95,7 @@ fn prototype_progress_is_migrated_once_without_changing_its_rank_breakdown() {
     db.connect().unwrap().execute_batch("CREATE TABLE attempts(session TEXT,stage TEXT,size INTEGER,rank TEXT,correct INTEGER,detail TEXT,created TEXT); INSERT INTO attempts VALUES ('old','winner',19,'9k/3d',1,'{\"answer\":\"W\"}','2026-11-07 12:00:00');").unwrap();
     let migrated = Db::open(&db.path).unwrap();
     assert_eq!(migrated.progress().unwrap()["total"], 1);
-    assert_eq!(
-        migrated.progress().unwrap()["breakdown"][0]["rank"],
-        "9k/3d"
-    );
+    assert_eq!(migrated.progress().unwrap()["breakdown"][0]["rank"], "3k");
     let reopened = Db::open(&db.path).unwrap();
     assert_eq!(reopened.progress().unwrap()["total"], 1);
     drop(reopened);

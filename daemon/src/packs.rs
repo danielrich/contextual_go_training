@@ -65,6 +65,38 @@ impl Service {
         }
         Err("Corpus selection failed".into())
     }
+    pub async fn next_problem(&self, size: &str, speed: &str) -> Result<StoredProblem> {
+        let selected = if size == "mixed" {
+            self.choose_game(size, speed)?.size
+        } else {
+            size.parse().map_err(|_| "Invalid board size")?
+        };
+        if let Some(p) = self.db.take_ready(selected, speed, &self.engine.identity)? {
+            return Ok(p);
+        }
+        self.new_problem(&selected.to_string(), speed).await
+    }
+    pub async fn prefetch(self: Arc<Self>) {
+        loop {
+            for size in [9, 19, 13] {
+                if !self.engine.config.model.is_file() {
+                    break;
+                }
+                if self
+                    .db
+                    .ready_count(size, "live", &self.engine.identity)
+                    .unwrap_or(2)
+                    >= 2
+                {
+                    continue;
+                }
+                if let Ok(p) = self.new_problem(&size.to_string(), "live").await {
+                    let _ = self.db.queue_ready(&p);
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+        }
+    }
     pub async fn new_problem(&self, size: &str, speed: &str) -> Result<StoredProblem> {
         let mut last_error = String::new();
         for _ in 0..12 {
@@ -105,10 +137,14 @@ impl Service {
                 })
             })
             .collect::<Vec<_>>();
-        let suggestions = root["moveInfos"]
+        let mut ranked = root["moveInfos"]
             .as_array()
             .ok_or("Missing engine move suggestions")?
             .iter()
+            .collect::<Vec<_>>();
+        ranked.sort_by_key(|m| m["order"].as_u64().unwrap_or(u64::MAX));
+        let suggestions = ranked
+            .into_iter()
             .take(3)
             .map(move_eval)
             .collect::<Result<Vec<_>>>()?;
@@ -203,10 +239,11 @@ impl Service {
         }
         let _lock = self.problem_lock.lock().await;
         let mut p=self.db.problem(&a.problem_id)?.ok_or("Problem not found on this server; retain the offline attempt and restore the server database")?;
-        if a.grader_version != p.problem.analysis.grader_version {
+        if ![grade::VERSION, "whole-board-grader-v1"].contains(&a.grader_version.as_str()) {
             return Err("Grader version mismatch; offline answer retained".into());
         }
-        let initial = grade::grade(&p.problem, &a.stage, &a.answer)?;
+        let initial =
+            grade::grade_with_version(&p.problem, &a.stage, &a.answer, &a.grader_version)?;
         if initial["pending"] == true {
             for m in initial["missing"]
                 .as_array()
@@ -216,11 +253,17 @@ impl Service {
                     .await?;
             }
         }
-        let feedback = grade::grade(&p.problem, &a.stage, &a.answer)?;
+        let feedback =
+            grade::grade_with_version(&p.problem, &a.stage, &a.answer, &a.grader_version)?;
         if feedback["pending"] == true {
             return Err("Analysis remains pending; retry sync later".into());
         }
         self.db.record_attempt(&a, &p.problem, &feedback)?;
+        let feedback = self
+            .db
+            .existing_attempt(&a.id)?
+            .ok_or("Saved attempt missing")?
+            .1;
         Ok(json!({"id":a.id,"feedback":feedback}))
     }
     pub fn create_job(

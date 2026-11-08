@@ -1,6 +1,6 @@
 use crate::model::{Problem, Result};
 use serde_json::{json, Value};
-pub const VERSION: &str = "whole-board-grader-v1";
+pub const VERSION: &str = "whole-board-grader-v2";
 pub const STAGES: [&str; 4] = ["winner", "score", "groups", "candidates"];
 pub fn candidate_loss(baseline: f64, candidate: f64, player: &str) -> f64 {
     ((baseline - candidate) * if player == "B" { 1. } else { -1. }).max(0.)
@@ -25,11 +25,23 @@ pub fn group_status(p: &Problem, group: &crate::model::Group) -> &'static str {
     }
 }
 pub fn grade(p: &Problem, stage: &str, answer: &Value) -> Result<Value> {
+    grade_with_version(p, stage, answer, VERSION)
+}
+pub fn grade_with_version(
+    p: &Problem,
+    stage: &str,
+    answer: &Value,
+    version: &str,
+) -> Result<Value> {
+    if ![VERSION, "whole-board-grader-v1"].contains(&version) {
+        return Err("Unknown grading version".into());
+    }
+    let legacy = version == "whole-board-grader-v1";
     let index = STAGES
         .iter()
         .position(|s| *s == stage)
         .ok_or("Unknown question")?;
-    let mut result = json!({"stage":stage,"next_stage":STAGES.get(index+1),"pending":false,"grader_version":VERSION});
+    let mut result = json!({"stage":stage,"next_stage":STAGES.get(index+1),"pending":false,"grader_version":version});
     match stage {
         "winner" => {
             let a = answer
@@ -91,21 +103,29 @@ pub fn grade(p: &Problem, stage: &str, answer: &Value) -> Result<Value> {
                 }
                 if let Some(v) = p.analysis.candidates.get(m) {
                     let loss = candidate_loss(p.analysis.score, v.score, &p.to_play);
-                    evaluated.push(json!({"move":m,"loss":round(loss),"correct":loss<=2.,"pv":v.pv,"visits":v.visits}));
+                    evaluated.push(json!({"move":m,"loss":loss,"correct":if legacy {loss<=2.}else{loss<2.},"blunder":loss>5.,"serious_blunder":loss>10.,"pv":v.pv,"visits":v.visits}));
                 } else {
                     missing.push(m.to_string());
                 }
             }
+            let top_hit = p
+                .analysis
+                .suggestions
+                .first()
+                .map(|top| seen.contains(top.vertex.as_str()))
+                .unwrap_or(false);
+            result["engine_top_hit"] = json!(top_hit);
             if !missing.is_empty() {
                 result["pending"] = json!(true);
                 result["missing"] = json!(missing);
                 result["correct"] = Value::Null;
             } else {
-                result["correct"] = json!(evaluated.iter().all(|v| v["correct"] == true));
+                result["correct"] =
+                    json!(evaluated.iter().all(|v| v["correct"] == true) || (!legacy && top_hit));
             }
             result["candidates"] = json!(evaluated);
             result["suggestions"] = json!(p.analysis.suggestions);
-            result["message"]=json!("Each candidate is independently searched from this position. Within 2 estimated points of the baseline earns credit. Search noise can affect close calls; unevaluated moves remain pending.");
+            result["message"]=json!("Each candidate is independently searched from this position. A set earns credit when every move loses less than 2 estimated points, or it includes the engine top move. Blunder: more than 5 points lost; serious blunder: more than 10. Search noise can affect close calls; unevaluated moves remain pending.");
         }
         _ => unreachable!(),
     }

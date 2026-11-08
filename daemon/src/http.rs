@@ -31,6 +31,7 @@ pub fn router(service: Arc<Service>, assets: PathBuf) -> Router {
         .route("/health", get(|| async { "ok" }))
         .route("/api/status", get(status))
         .route("/api/progress", get(progress))
+        .route("/api/review", get(review_positions))
         .route("/api/new", post(new_problem))
         .route("/api/problems/{id}", get(problem))
         .route("/api/import", post(import_sgf))
@@ -68,6 +69,11 @@ async fn status(State(s): State<Arc<Service>>) -> std::result::Result<Json<Value
 async fn progress(State(s): State<Arc<Service>>) -> std::result::Result<Json<Value>, ApiError> {
     Ok(Json(s.db.progress().map_err(unavailable)?))
 }
+async fn review_positions(
+    State(s): State<Arc<Service>>,
+) -> std::result::Result<Json<Value>, ApiError> {
+    Ok(Json(s.db.review_positions().map_err(unavailable)?))
+}
 #[derive(Deserialize)]
 struct NewRequest {
     #[serde(default = "mixed")]
@@ -92,7 +98,7 @@ async fn new_problem(
     }
     Ok(Json(
         serde_json::to_value(
-            s.new_problem(&b.size, &b.speed)
+            s.next_problem(&b.size, &b.speed)
                 .await
                 .map_err(unavailable)?
                 .problem,

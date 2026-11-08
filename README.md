@@ -8,15 +8,17 @@ them offline, then sync answers and reasoning back to the server.
 ## What is implemented
 
 - Rust/Axum daemon with SQLite storage and a persistent KataGo subprocess.
+  The engine warms at startup and prepares a small live-position buffer so
+  practice starts can reuse completed analysis. Buffer misses still need search.
 - Installable PWA with an offline app shell, IndexedDB problem packs, resumable
   sessions, saved reasoning, and an idempotent attempt outbox.
 - Background preparation of 1–50 problems per pack (25 by default). Each ready
   problem contains a searched evaluation for **every legal move, including pass**.
 - Rank-independent selection on 9×9, 13×13 and 19×19. Mixed practice emphasizes
   19×19. All playable phases, including late endgame, can be selected.
-- Accuracy grouped by question, board size, and the original Black/White ranks.
+- Accuracy grouped by question, board size, and the rounded mean game rank.
   Candidate progress also reports average point loss per proposed move, sound-move
-  percentage and sample counts by board size and rank pair.
+  percentage and sample counts by board size and mean game rank.
 - Hover or focus engine-line buttons to preview numbered continuations on the
   board. Tap/click to pin a line, step through moves, or restore the original board.
 - Live, real-time, correspondence, and all-speed practice settings; handicap
@@ -162,14 +164,23 @@ is actually present rather than promising a cache that no longer exists.
 
 - Winner: within 2 estimated points is “close”.
 - Score: within 3 points of the signed estimate, including komi, earns credit.
-- Candidates: distinct legal alternatives, each within 2 estimated points of the
-  baseline. Pass is allowed. If fewer than three legal moves exist, the question
-  asks for the available number.
+- Candidates: a set earns credit if every alternative loses **less than 2 points**,
+  or it includes the engine’s top move. Track losses **over 5** as blunders and
+  **over 10** as serious blunders (also included in the blunder count). Pass is
+  allowed. If fewer than three legal moves exist, ask for the available number.
+- Game rank: mean both recorded ranks on a continuous kyu/dan ladder and round
+  to the nearest rank; exact halves round toward the stronger rank. Unknown
+  ranks remain Unknown. Both original ranks remain in the position details.
+- First-time and review results are separate. Repeated positions do not improve
+  main accuracy. **Review mistakes** reopens positions with incorrect answers or
+  candidate losses of at least 2 points, with separate review point-loss metrics.
 - Groups: secure-looking means ≥90% own-color ownership at every stone; at-risk
   means ≥70% opponent ownership at every stone; otherwise uncertain. These are
   ownership estimates, **not proofs of life, death or seki**.
 
 Model identity, visit budget and grader version are stored with each problem.
+New submissions use grader v2; already submitted v1 results retain their original
+scoring, and queued v1 answers remain sync-compatible.
 Search noise can affect close calls. Synced answers are regraded by the server
 from its saved reference rather than trusting a client-supplied correctness flag.
 Neither practice accuracy nor the profile rank is an OGS rating prediction.

@@ -33,3 +33,35 @@ fn score_tolerance_and_winner_match_original_flow() {
         true
     );
 }
+#[test]
+fn candidate_sets_accept_top_move_and_track_strict_blunder_thresholds() {
+    let mut p = problem();
+    p.analysis.candidates.insert(
+        "pass".into(),
+        MoveEval {
+            vertex: "pass".into(),
+            score: 6.01,
+            visits: 200,
+            pv: vec![],
+        },
+    );
+    p.analysis.candidates.get_mut("E5").unwrap().score = -2.;
+    let f = grade::grade(&p, "candidates", &json!(["D4", "E5", "pass"])).unwrap();
+    assert_eq!(f["correct"], false);
+    assert_eq!(f["candidates"][1]["correct"], false);
+    assert_eq!(f["candidates"][2]["blunder"], true);
+    assert_eq!(f["candidates"][2]["serious_blunder"], true);
+    p.analysis
+        .suggestions
+        .push(p.analysis.candidates["D4"].clone());
+    let f = grade::grade(&p, "candidates", &json!(["D4", "E5", "pass"])).unwrap();
+    assert_eq!(f["correct"], true);
+    assert_eq!(f["engine_top_hit"], true);
+}
+
+#[test]
+fn mean_rank_handles_unicode_unknown_and_kyu_dan_boundary() {
+    assert_eq!(mean_rank("初段", "10k"), "Unknown");
+    assert_eq!(mean_rank("10k", "7k"), "8k");
+    assert_eq!(mean_rank("1k", "1d"), "1d");
+}

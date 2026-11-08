@@ -36,6 +36,7 @@ impl Db {
         CREATE TABLE IF NOT EXISTS wb_raw(id TEXT PRIMARY KEY,raw TEXT NOT NULL,status TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS wb_imports(source TEXT PRIMARY KEY,line INTEGER NOT NULL);
         CREATE TABLE IF NOT EXISTS wb_problems(id TEXT PRIMARY KEY,data TEXT NOT NULL);
+        CREATE TABLE IF NOT EXISTS wb_ready(problem_id TEXT PRIMARY KEY,size INTEGER,speed TEXT,model TEXT);
         CREATE TABLE IF NOT EXISTS wb_jobs(id TEXT PRIMARY KEY,data TEXT NOT NULL);
         CREATE TABLE IF NOT EXISTS wb_items(job_id TEXT,ordinal INTEGER,problem_id TEXT,PRIMARY KEY(job_id,ordinal));
         CREATE TABLE IF NOT EXISTS wb_attempts(id TEXT PRIMARY KEY,data TEXT NOT NULL,feedback TEXT NOT NULL,size INTEGER,black_rank TEXT,white_rank TEXT,stage TEXT,correct INTEGER,created INTEGER);
@@ -333,6 +334,9 @@ impl Db {
             }
             return Ok(());
         }
+        let seen:bool=tx.query_row("SELECT EXISTS(SELECT 1 FROM wb_attempts a LEFT JOIN wb_problems sp ON sp.id=json_extract(a.data,'$.problem_id') WHERE (a.stage=? OR (?<>'' AND COALESCE(json_extract(a.data,'$.session_id'),'')<>?)) AND (json_extract(a.data,'$.problem_id')=? OR (?<>'' AND json_extract(sp.data,'$.problem.source_game_id')=? AND json_extract(sp.data,'$.problem.turn')=? AND json_extract(sp.data,'$.problem.size')=?)))",params![a.stage,a.session_id,a.session_id,p.id,p.source_game_id,p.source_game_id,p.turn,p.size],|r|r.get(0)).map_err(err)?;
+        let mut feedback = feedback.clone();
+        feedback["review"] = json!(a.review || seen);
         tx.execute(
             "INSERT INTO wb_attempts VALUES (?,?,?,?,?,?,?,?,?)",
             params![
@@ -354,13 +358,18 @@ impl Db {
         tx.commit().map_err(err)
     }
     pub fn progress(&self) -> Result<Value> {
+        let mut main = self.progress_for(false)?;
+        main["review"] = self.progress_for(true)?;
+        Ok(main)
+    }
+    fn progress_for(&self, review: bool) -> Result<Value> {
         let c = self.connect()?;
         let mut skills = json!({"winner":{"total":0,"correct":0},"score":{"total":0,"correct":0},"groups":{"total":0,"correct":0},"candidates":{"total":0,"correct":0}});
-        let mut breakdown = vec![];
+        let mut breakdown: Vec<Value> = vec![];
         let mut total = 0;
-        let mut s=c.prepare("SELECT stage,size,black_rank,white_rank,count(*),sum(correct) FROM wb_attempts WHERE correct IS NOT NULL GROUP BY stage,size,black_rank,white_rank").map_err(err)?;
+        let mut s=c.prepare("SELECT stage,size,black_rank,white_rank,count(*),sum(correct) FROM wb_attempts WHERE COALESCE(json_extract(feedback,'$.review'),0)=? AND correct IS NOT NULL GROUP BY stage,size,black_rank,white_rank").map_err(err)?;
         let rows = s
-            .query_map([], |r| {
+            .query_map([i64::from(review)], |r| {
                 Ok((
                     r.get::<_, String>(0)?,
                     r.get::<_, usize>(1)?,
@@ -378,15 +387,26 @@ impl Db {
                 skill["correct"] = json!(skill["correct"].as_u64().unwrap_or(0) + correct);
             }
             total += n;
-            breakdown.push(json!({"stage":stage,"size":size,"black_rank":b,"white_rank":w,"rank":format!("{b}/{w}"),"total":n,"correct":correct}));
+            let rank = crate::model::mean_rank(&b, &w);
+            if let Some(row) = breakdown
+                .iter_mut()
+                .find(|r| r["stage"] == stage && r["size"] == size && r["rank"] == rank)
+            {
+                row["total"] = json!(row["total"].as_u64().unwrap_or(0) + n);
+                row["correct"] = json!(row["correct"].as_u64().unwrap_or(0) + correct);
+            } else {
+                breakdown.push(
+                    json!({"stage":stage,"size":size,"rank":rank,"total":n,"correct":correct}),
+                );
+            }
         }
-        let mut s=c.prepare("SELECT stage,size,correct,created FROM wb_attempts WHERE correct IS NOT NULL ORDER BY created DESC,rowid DESC LIMIT 12").map_err(err)?;
-        let recent=s.query_map([],|r|Ok(json!({"stage":r.get::<_,String>(0)?,"size":r.get::<_,usize>(1)?,"correct":r.get::<_,bool>(2)?,"created":r.get::<_,u64>(3)?}))).map_err(err)?.collect::<std::result::Result<Vec<_>,_>>().map_err(err)?;
-        let mut q = json!({"total_moves":0,"total_loss":0.0,"sound_moves":0,"average_loss":null,"breakdown":[]});
-        let mut groups = vec![];
-        let mut query=c.prepare("SELECT a.size,a.black_rank,a.white_rank,count(*),sum(json_extract(m.value,'$.loss')),sum(CASE WHEN json_extract(m.value,'$.correct')=1 THEN 1 ELSE 0 END) FROM wb_attempts a,json_each(a.feedback,'$.candidates') m WHERE a.stage='candidates' AND a.correct IS NOT NULL AND COALESCE(json_extract(a.feedback,'$.pending'),0)=0 AND json_type(m.value,'$.loss') IN ('integer','real') AND json_extract(m.value,'$.loss')>=0 GROUP BY a.size,a.black_rank,a.white_rank ORDER BY a.size,a.black_rank,a.white_rank").map_err(err)?;
+        let mut s=c.prepare("SELECT stage,size,correct,created FROM wb_attempts WHERE COALESCE(json_extract(feedback,'$.review'),0)=? AND correct IS NOT NULL ORDER BY created DESC,rowid DESC LIMIT 12").map_err(err)?;
+        let recent=s.query_map([i64::from(review)],|r|Ok(json!({"stage":r.get::<_,String>(0)?,"size":r.get::<_,usize>(1)?,"correct":r.get::<_,bool>(2)?,"created":r.get::<_,u64>(3)?}))).map_err(err)?.collect::<std::result::Result<Vec<_>,_>>().map_err(err)?;
+        let mut q = json!({"total_moves":0,"total_loss":0.0,"sound_moves":0,"average_loss":null,"blunders":0,"serious_blunders":0,"total_sets":0,"top_move_hits":0,"breakdown":[]});
+        let mut groups: Vec<Value> = vec![];
+        let mut query=c.prepare("SELECT a.size,a.black_rank,a.white_rank,count(*),sum(json_extract(m.value,'$.loss')),sum(CASE WHEN json_extract(m.value,'$.loss')<2 THEN 1 ELSE 0 END),sum(CASE WHEN json_extract(m.value,'$.loss')>5 THEN 1 ELSE 0 END),sum(CASE WHEN json_extract(m.value,'$.loss')>10 THEN 1 ELSE 0 END),count(DISTINCT a.id),count(DISTINCT CASE WHEN COALESCE(json_extract(a.feedback,'$.engine_top_hit'),EXISTS(SELECT 1 FROM json_each(a.feedback,'$.candidates') t WHERE json_extract(t.value,'$.move')=json_extract(a.feedback,'$.suggestions[0].move'))) THEN a.id END) FROM wb_attempts a,json_each(a.feedback,'$.candidates') m WHERE COALESCE(json_extract(a.feedback,'$.review'),0)=? AND a.stage='candidates' AND a.correct IS NOT NULL AND COALESCE(json_extract(a.feedback,'$.pending'),0)=0 AND json_type(m.value,'$.loss') IN ('integer','real') AND json_extract(m.value,'$.loss')>=0 GROUP BY a.size,a.black_rank,a.white_rank ORDER BY a.size,a.black_rank,a.white_rank").map_err(err)?;
         let rows = query
-            .query_map([], |r| {
+            .query_map([i64::from(review)], |r| {
                 Ok((
                     r.get::<_, usize>(0)?,
                     r.get::<_, String>(1)?,
@@ -394,26 +414,120 @@ impl Db {
                     r.get::<_, u64>(3)?,
                     r.get::<_, f64>(4)?,
                     r.get::<_, u64>(5)?,
+                    r.get::<_, u64>(6)?,
+                    r.get::<_, u64>(7)?,
+                    r.get::<_, u64>(8)?,
+                    r.get::<_, u64>(9)?,
                 ))
             })
             .map_err(err)?;
-        let (mut moves, mut loss, mut sound) = (0_u64, 0.0, 0_u64);
         for row in rows {
-            let (size, b, w, n, l, c) = row.map_err(err)?;
-            moves += n;
-            loss += l;
-            sound += c;
-            groups.push(json!({"size":size,"black_rank":b,"white_rank":w,"rank":format!("{b}/{w}"),"total_moves":n,"total_loss":l,"sound_moves":c,"average_loss":l/n as f64}));
+            let (size, b, w, n, loss, sound, blunders, serious, sets, hits) = row.map_err(err)?;
+            for (key, value) in [
+                ("total_moves", n),
+                ("sound_moves", sound),
+                ("blunders", blunders),
+                ("serious_blunders", serious),
+                ("total_sets", sets),
+                ("top_move_hits", hits),
+            ] {
+                q[key] = json!(q[key].as_u64().unwrap_or(0) + value);
+            }
+            q["total_loss"] = json!(q["total_loss"].as_f64().unwrap_or(0.) + loss);
+            let rank = crate::model::mean_rank(&b, &w);
+            if let Some(row) = groups
+                .iter_mut()
+                .find(|r| r["size"] == size && r["rank"] == rank)
+            {
+                for (key, value) in [
+                    ("total_moves", n),
+                    ("sound_moves", sound),
+                    ("blunders", blunders),
+                    ("serious_blunders", serious),
+                    ("total_sets", sets),
+                    ("top_move_hits", hits),
+                ] {
+                    row[key] = json!(row[key].as_u64().unwrap_or(0) + value);
+                }
+                row["total_loss"] = json!(row["total_loss"].as_f64().unwrap_or(0.) + loss);
+                row["average_loss"] = json!(
+                    row["total_loss"].as_f64().unwrap() / row["total_moves"].as_f64().unwrap()
+                );
+            } else {
+                groups.push(json!({"size":size,"rank":rank,"total_moves":n,"total_loss":loss,"sound_moves":sound,"average_loss":loss/n as f64,"blunders":blunders,"serious_blunders":serious,"total_sets":sets,"top_move_hits":hits}));
+            }
         }
-        q["total_moves"] = json!(moves);
-        q["total_loss"] = json!(loss);
-        q["sound_moves"] = json!(sound);
+        let moves = q["total_moves"].as_u64().unwrap_or(0);
         if moves > 0 {
-            q["average_loss"] = json!(loss / moves as f64);
+            q["average_loss"] = json!(q["total_loss"].as_f64().unwrap_or(0.) / moves as f64);
         }
         q["breakdown"] = json!(groups);
         Ok(
             json!({"total":total,"skills":skills,"breakdown":breakdown,"recent":recent,"candidate_quality":q}),
         )
+    }
+    pub fn queue_ready(&self, p: &StoredProblem) -> Result<()> {
+        self.connect()?
+            .execute(
+                "INSERT OR IGNORE INTO wb_ready VALUES (?,?,?,?)",
+                params![
+                    p.problem.id,
+                    p.problem.size,
+                    p.problem.speed,
+                    p.problem.analysis.model
+                ],
+            )
+            .map_err(err)?;
+        Ok(())
+    }
+    pub fn ready_count(&self, size: usize, speed: &str, model: &str) -> Result<u64> {
+        self.connect()?
+            .query_row(
+                "SELECT count(*) FROM wb_ready WHERE size=? AND speed=? AND model=?",
+                params![size, speed, model],
+                |r| r.get(0),
+            )
+            .map_err(err)
+    }
+    pub fn take_ready(
+        &self,
+        size: usize,
+        speed: &str,
+        model: &str,
+    ) -> Result<Option<StoredProblem>> {
+        let mut c = self.connect()?;
+        let tx = c
+            .transaction_with_behavior(rusqlite::TransactionBehavior::Immediate)
+            .map_err(err)?;
+        let found:Option<(String,String)>=tx.query_row("SELECT r.problem_id,p.data FROM wb_ready r JOIN wb_problems p ON p.id=r.problem_id WHERE r.size=? AND r.model=? AND (?='all' OR r.speed=? OR (?='realtime' AND r.speed IN ('live','blitz','rapid'))) ORDER BY r.rowid LIMIT 1",params![size,model,speed,speed,speed],|r|Ok((r.get(0)?,r.get(1)?))).optional().map_err(err)?;
+        if let Some((id, data)) = found {
+            tx.execute("DELETE FROM wb_ready WHERE problem_id=?", [id])
+                .map_err(err)?;
+            tx.commit().map_err(err)?;
+            Ok(Some(serde_json::from_str(&data).map_err(err)?))
+        } else {
+            Ok(None)
+        }
+    }
+    pub fn review_positions(&self) -> Result<Value> {
+        let c = self.connect()?;
+        let mut query=c.prepare("SELECT p.data,group_concat(DISTINCT a.stage),max(a.created) FROM wb_attempts a JOIN wb_problems p ON p.id=json_extract(a.data,'$.problem_id') WHERE COALESCE(json_extract(a.feedback,'$.review'),0)=0 AND (a.correct=0 OR EXISTS(SELECT 1 FROM json_each(a.feedback,'$.candidates') m WHERE json_extract(m.value,'$.loss')>=2)) GROUP BY p.id ORDER BY max(a.created) DESC LIMIT 50").map_err(err)?;
+        let rows = query
+            .query_map([], |r| {
+                Ok((
+                    r.get::<_, String>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, u64>(2)?,
+                ))
+            })
+            .map_err(err)?;
+        let mut out = vec![];
+        for row in rows {
+            let (data, stages, created) = row.map_err(err)?;
+            let stored: StoredProblem = serde_json::from_str(&data).map_err(err)?;
+            let p = stored.problem;
+            out.push(json!({"id":p.id,"size":p.size,"turn":p.turn,"rank":crate::model::mean_rank(&p.black_rank,&p.white_rank),"stages":stages,"last_seen":created}));
+        }
+        Ok(json!(out))
     }
 }

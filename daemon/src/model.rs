@@ -114,6 +114,10 @@ pub struct Attempt {
     pub reasoning: String,
     pub created: u64,
     pub grader_version: String,
+    #[serde(default)]
+    pub review: bool,
+    #[serde(default)]
+    pub session_id: String,
 }
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PackJob {
@@ -139,4 +143,31 @@ pub fn now() -> u64 {
 }
 pub fn valid_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-')
+}
+
+pub fn mean_rank(black: &str, white: &str) -> String {
+    fn index(value: &str) -> Option<u32> {
+        let value = value.trim().to_lowercase();
+        let suffix = value.chars().last()?;
+        if suffix != 'k' && suffix != 'd' {
+            return None;
+        }
+        let n = value[..value.len() - 1].parse::<u32>().ok()?;
+        match suffix {
+            'k' if (1..=30).contains(&n) => Some(30 - n),
+            'd' if (1..=9).contains(&n) => Some(29 + n),
+            _ => None,
+        }
+    }
+    match (index(black), index(white)) {
+        (Some(b), Some(w)) => {
+            let n = (b + w + 1) / 2;
+            if n <= 29 {
+                format!("{}k", 30 - n)
+            } else {
+                format!("{}d", n - 29)
+            }
+        }
+        _ => "Unknown".into(),
+    }
 }

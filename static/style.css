@@ -6,3 +6,5 @@
 .skip-question{display:block;margin-top:12px;background:transparent;border:1px solid var(--line);color:var(--muted);width:100%}#steps li.skipped{opacity:.55;text-decoration:line-through}
 
 .pv-button{font-size:12px;padding:8px 12px;margin:6px 4px 6px 0;border:1px solid var(--line);background:transparent;color:var(--green)}.pv-button[aria-pressed="true"]{background:var(--green);color:white}.variation-controls{padding:12px 16px;border-top:1px solid var(--line);background:#edf2e2;font-size:12px}.variation-controls p{font-size:11px}.variation-controls>div{display:flex;flex-wrap:wrap;gap:6px}.variation-controls .button{padding:8px 10px;font-size:11px}.candidate-metrics{margin-bottom:30px}
+
+@media(max-width:560px){.sidebar nav{grid-template-columns:repeat(5,1fr)}}
