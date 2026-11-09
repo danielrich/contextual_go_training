@@ -58,3 +58,21 @@ fn sgf_import_handles_setup_escapes_mainline_and_handicap() {
     assert_eq!(g.moves[1][1], "G7");
     whole_board::go::replay(&g, 2).unwrap();
 }
+#[test]
+fn captures_follow_history_setup_passes_and_the_requested_turn() {
+    let g:whole_board::model::Game=serde_json::from_value(serde_json::json!({"id":"captures","size":9,"komi":6.5,"rules":"japanese","initial_player":"B","setup":[["W","B8"],["B","A8"],["B","B9"],["B","C8"]],"moves":[["B","B7"],["W","pass"],["B","pass"]]})).unwrap();
+    let (_, c) = whole_board::go::replay_with_captures(&g, 0).unwrap();
+    assert_eq!(c.black, 0);
+    let (b, c) = whole_board::go::replay_with_captures(&g, 3).unwrap();
+    assert_eq!(c.black, 1);
+    assert_eq!(c.white, 0);
+    assert_eq!(b[1][1], 0);
+}
+#[test]
+fn legal_suicide_is_credited_to_the_opponent_capture_total() {
+    let g:whole_board::model::Game=serde_json::from_value(serde_json::json!({"id":"suicide","size":9,"komi":7.5,"rules":"new-zealand","initial_player":"B","setup":[["W","A8"],["W","B9"]],"moves":[["B","A9"]]})).unwrap();
+    let (b, c) = whole_board::go::replay_with_captures(&g, 1).unwrap();
+    assert_eq!(c.white, 1);
+    assert_eq!(c.black, 0);
+    assert_eq!(b[0][0], 0);
+}

@@ -240,7 +240,12 @@ impl Db {
             })
             .optional()
             .map_err(err)?;
-        v.map(|s| serde_json::from_str(&s).map_err(err)).transpose()
+        v.map(|s| {
+            serde_json::from_str::<StoredProblem>(&s)
+                .map_err(err)?
+                .with_captures()
+        })
+        .transpose()
     }
     pub fn save_job(&self, j: &PackJob) -> Result<()> {
         self.connect()?
@@ -292,8 +297,12 @@ impl Db {
         let c = self.connect()?;
         let mut s=c.prepare("SELECT p.data FROM wb_items i JOIN wb_problems p ON p.id=i.problem_id WHERE i.job_id=? ORDER BY i.ordinal").map_err(err)?;
         let rows = s.query_map([job], |r| r.get::<_, String>(0)).map_err(err)?;
-        rows.map(|r| serde_json::from_str(&r.map_err(err)?).map_err(err))
-            .collect()
+        rows.map(|r| {
+            serde_json::from_str::<StoredProblem>(&r.map_err(err)?)
+                .map_err(err)?
+                .with_captures()
+        })
+        .collect()
     }
     pub fn existing_attempt(&self, id: &str) -> Result<Option<(Attempt, Value)>> {
         let c = self.connect()?;
@@ -462,8 +471,62 @@ impl Db {
             q["average_loss"] = json!(q["total_loss"].as_f64().unwrap_or(0.) / moves as f64);
         }
         q["breakdown"] = json!(groups);
+        let mut score_quality = json!({"total_estimates":0,"total_error":0.0,"average_error":null,"within_two":0,"within_one":0,"breakdown":[]});
+        let mut score_groups: Vec<Value> = vec![];
+        let mut sq=c.prepare("SELECT size,black_rank,white_rank,count(*),sum(json_extract(feedback,'$.error')),sum(CASE WHEN json_extract(feedback,'$.error')<=2 THEN 1 ELSE 0 END),sum(CASE WHEN json_extract(feedback,'$.error')<=1 THEN 1 ELSE 0 END) FROM wb_attempts WHERE COALESCE(json_extract(feedback,'$.review'),0)=? AND stage='score' AND correct IS NOT NULL AND json_type(feedback,'$.error') IN ('integer','real') GROUP BY size,black_rank,white_rank").map_err(err)?;
+        let score_rows = sq
+            .query_map([i64::from(review)], |r| {
+                Ok((
+                    r.get::<_, usize>(0)?,
+                    r.get::<_, String>(1)?,
+                    r.get::<_, String>(2)?,
+                    r.get::<_, u64>(3)?,
+                    r.get::<_, f64>(4)?,
+                    r.get::<_, u64>(5)?,
+                    r.get::<_, u64>(6)?,
+                ))
+            })
+            .map_err(err)?;
+        for row in score_rows {
+            let (size, b, w, n, error, two, one) = row.map_err(err)?;
+            let rank = crate::model::mean_rank(&b, &w);
+            for (key, value) in [
+                ("total_estimates", n),
+                ("within_two", two),
+                ("within_one", one),
+            ] {
+                score_quality[key] = json!(score_quality[key].as_u64().unwrap_or(0) + value);
+            }
+            score_quality["total_error"] =
+                json!(score_quality["total_error"].as_f64().unwrap_or(0.) + error);
+            if let Some(g) = score_groups
+                .iter_mut()
+                .find(|r| r["size"] == size && r["rank"] == rank)
+            {
+                for (key, value) in [
+                    ("total_estimates", n),
+                    ("within_two", two),
+                    ("within_one", one),
+                ] {
+                    g[key] = json!(g[key].as_u64().unwrap_or(0) + value);
+                }
+                g["total_error"] = json!(g["total_error"].as_f64().unwrap_or(0.) + error);
+                g["average_error"] = json!(
+                    g["total_error"].as_f64().unwrap() / g["total_estimates"].as_f64().unwrap()
+                );
+            } else {
+                score_groups.push(json!({"size":size,"rank":rank,"total_estimates":n,"total_error":error,"average_error":error/n as f64,"within_two":two,"within_one":one}));
+            }
+        }
+        if score_quality["total_estimates"].as_u64().unwrap_or(0) > 0 {
+            score_quality["average_error"] = json!(
+                score_quality["total_error"].as_f64().unwrap()
+                    / score_quality["total_estimates"].as_f64().unwrap()
+            );
+        }
+        score_quality["breakdown"] = json!(score_groups);
         Ok(
-            json!({"total":total,"skills":skills,"breakdown":breakdown,"recent":recent,"candidate_quality":q}),
+            json!({"total":total,"skills":skills,"breakdown":breakdown,"recent":recent,"candidate_quality":q,"score_quality":score_quality}),
         )
     }
     pub fn queue_ready(&self, p: &StoredProblem) -> Result<()> {
@@ -504,7 +567,11 @@ impl Db {
             tx.execute("DELETE FROM wb_ready WHERE problem_id=?", [id])
                 .map_err(err)?;
             tx.commit().map_err(err)?;
-            Ok(Some(serde_json::from_str(&data).map_err(err)?))
+            Ok(Some(
+                serde_json::from_str::<StoredProblem>(&data)
+                    .map_err(err)?
+                    .with_captures()?,
+            ))
         } else {
             Ok(None)
         }

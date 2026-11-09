@@ -228,3 +228,47 @@ fn first_session_questions_stay_main_but_a_later_session_is_entirely_review() {
     drop(s);
     std::fs::remove_dir_all(dir).unwrap();
 }
+#[test]
+fn saved_legacy_problems_are_enriched_with_capture_history() {
+    let (dir, s) = setup();
+    let mut p = saved();
+    p.game.setup = vec![
+        ["W".into(), "B8".into()],
+        ["B".into(), "A8".into()],
+        ["B".into(), "B9".into()],
+        ["B".into(), "C8".into()],
+    ];
+    p.game.moves = vec![["B".into(), "B7".into()]];
+    assert!(p.problem.captures.is_none());
+    s.db.save_problem(&p).unwrap();
+    let captures =
+        s.db.problem("p1")
+            .unwrap()
+            .unwrap()
+            .problem
+            .captures
+            .unwrap();
+    assert_eq!(captures.black, 1);
+    assert_eq!(captures.white, 0);
+    drop(s);
+    std::fs::remove_dir_all(dir).unwrap();
+}
+#[test]
+fn counting_error_is_aggregated_by_mean_rank_without_changing_credit() {
+    let (dir, s) = setup();
+    let p = saved();
+    let a:Attempt=serde_json::from_value(json!({"id":"count-quality","problem_id":"p1","stage":"score","answer":24,"created":1700000000,"grader_version":grade::VERSION})).unwrap();
+    s.db.record_attempt(
+        &a,
+        &p.problem,
+        &json!({"correct":true,"error":6.0,"score":30.0,"tolerance":6.0}),
+    )
+    .unwrap();
+    let q = s.db.progress().unwrap()["score_quality"].clone();
+    assert_eq!(q["average_error"], 6.);
+    assert_eq!(q["total_estimates"], 1);
+    assert_eq!(q["within_two"], 0);
+    assert_eq!(q["breakdown"][0]["rank"], "9k");
+    drop(s);
+    std::fs::remove_dir_all(dir).unwrap();
+}

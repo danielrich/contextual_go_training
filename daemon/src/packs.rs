@@ -120,7 +120,7 @@ impl Service {
         Err(format!("Could not prepare a position: {last_error}"))
     }
     pub async fn prepare(&self, g: Game, turn: usize) -> Result<StoredProblem> {
-        let board = go::replay(&g, turn)?;
+        let (board, captures) = go::replay_with_captures(&g, turn)?;
         let root = self.engine.analyze(&g, turn, None).await?;
         let legal_moves = root["policy"]
             .as_array()
@@ -151,6 +151,7 @@ impl Service {
         let problem = Problem {
             id: new_id(),
             size: g.size,
+            captures: Some(captures),
             groups: go::groups(&board),
             board,
             turn,
@@ -239,7 +240,13 @@ impl Service {
         }
         let _lock = self.problem_lock.lock().await;
         let mut p=self.db.problem(&a.problem_id)?.ok_or("Problem not found on this server; retain the offline attempt and restore the server database")?;
-        if ![grade::VERSION, "whole-board-grader-v1"].contains(&a.grader_version.as_str()) {
+        if ![
+            grade::VERSION,
+            "whole-board-grader-v1",
+            "whole-board-grader-v2",
+        ]
+        .contains(&a.grader_version.as_str())
+        {
             return Err("Grader version mismatch; offline answer retained".into());
         }
         let initial =

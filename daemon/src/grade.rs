@@ -1,6 +1,6 @@
 use crate::model::{Problem, Result};
 use serde_json::{json, Value};
-pub const VERSION: &str = "whole-board-grader-v2";
+pub const VERSION: &str = "whole-board-grader-v3";
 pub const STAGES: [&str; 4] = ["winner", "score", "groups", "candidates"];
 pub fn candidate_loss(baseline: f64, candidate: f64, player: &str) -> f64 {
     ((baseline - candidate) * if player == "B" { 1. } else { -1. }).max(0.)
@@ -33,7 +33,7 @@ pub fn grade_with_version(
     answer: &Value,
     version: &str,
 ) -> Result<Value> {
-    if ![VERSION, "whole-board-grader-v1"].contains(&version) {
+    if ![VERSION, "whole-board-grader-v1", "whole-board-grader-v2"].contains(&version) {
         return Err("Unknown grading version".into());
     }
     let legacy = version == "whole-board-grader-v1";
@@ -64,10 +64,16 @@ pub fn grade_with_version(
                 .as_f64()
                 .filter(|v| v.is_finite() && v.abs() <= (p.size * p.size + 400) as f64)
                 .ok_or("Enter a finite score estimate")?;
-            result["correct"] = json!((a - p.analysis.score).abs() <= 3.);
+            let tolerance = if version == VERSION {
+                2.0_f64.max(p.analysis.score.abs() * 0.2)
+            } else {
+                3.
+            };
+            result["correct"] = json!((a - p.analysis.score).abs() <= tolerance);
+            result["tolerance"] = json!(tolerance);
             result["score"] = json!(round(p.analysis.score));
-            result["error"] = json!(round((a - p.analysis.score).abs()));
-            result["message"]=json!("KataGo estimates the final lead with strong play, including komi. Within 3 points earns credit; this is not simply settled territory.");
+            result["error"] = json!((a - p.analysis.score).abs());
+            result["message"]=json!("KataGo estimates the final lead with strong play, including komi. Within 2 points or 20% of the estimated lead earns credit. This is not simply settled territory.");
         }
         "groups" => {
             let a = answer.as_object().ok_or("Assess each marked group")?;

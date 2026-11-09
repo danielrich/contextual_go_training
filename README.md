@@ -163,7 +163,9 @@ is actually present rather than promising a cache that no longer exists.
 ## How grading works
 
 - Winner: within 2 estimated points is “close”.
-- Score: within 3 points of the signed estimate, including komi, earns credit.
+- Score: within **2 points or 20% of the signed lead**, whichever is larger, earns
+  credit. A +30 estimate accepts +24 through +36. Exact error, average error by
+  board/rank, and within-one/two-point counts remain visible separately.
 - Candidates: a set earns credit if every alternative loses **less than 2 points**,
   or it includes the engine’s top move. Track losses **over 5** as blunders and
   **over 10** as serious blunders (also included in the blunder count). Pass is
@@ -179,11 +181,34 @@ is actually present rather than promising a cache that no longer exists.
   ownership estimates, **not proofs of life, death or seki**.
 
 Model identity, visit budget and grader version are stored with each problem.
-New submissions use grader v2; already submitted v1 results retain their original
-scoring, and queued v1 answers remain sync-compatible.
+New submissions use grader v3; already submitted v1/v2 results retain their
+original scoring, and queued older answers remain sync-compatible.
 Search noise can affect close calls. Synced answers are regraded by the server
 from its saved reference rather than trusting a client-supplied correctness flag.
 Neither practice accuracy nor the profile rank is an OGS rating prediction.
+
+## Recount a position
+
+Captured-stone totals and komi are visible before winner and score answers.
+Capture totals come from replaying the recorded moves, including setup positions
+and captures caused by rules permitting suicide. Older server references are
+enriched from their retained games. An old offline bundle without capture history
+says it is unavailable until reconnected; it does not assume zero prisoners.
+
+After a wrong winner or score answer, choose **Recount on the board**. Click to
+mark Black/White territory, mark dead connected chains, erase, undo or clear.
+The worksheet shows territory, prisoners or living stones (depending on scoring),
+komi and a partial total. It preserves your work locally across reloads and never
+adds another graded answer. Exact engine-score comparison unlocks only after
+you have committed a score answer.
+
+**Show engine territory estimate** starts off. Turning it on permanently skips
+group assessment for that session, even if the overlay is hidden later. Tinted
+squares show ownership estimates at 60% confidence; orange borders flag confident
+disagreements with your manual marks. Orange rings on stones indicate estimated
+opponent ownership. The map is not final adjudicated territory and its squares
+need not add up to the predicted final score. Unsettled play, seki, handicap and
+rule-specific adjustments can differ from the manual worksheet.
 
 ## Update and back up
 

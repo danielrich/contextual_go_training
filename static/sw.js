@@ -1,6 +1,6 @@
 // build-release.sh replaces this token so each deployment has an atomic shell cache.
 const CACHE='whole-board-shell-__BUILD__';
-const ASSETS=['/','/index.html','/app.js','/grader.js','/offline.js','/preview.js','/style.css','/manifest.webmanifest','/icon-192.png','/icon-512.png','/icon-maskable-512.png'];
+const ASSETS=['/','/index.html','/app.js','/grader.js','/offline.js','/preview.js','/counting.js','/style.css','/manifest.webmanifest','/icon-192.png','/icon-512.png','/icon-maskable-512.png'];
 self.addEventListener('install',event=>event.waitUntil((async()=>{const cache=await caches.open(CACHE);try{await cache.addAll(ASSETS.map(url=>new Request(url,{cache:'reload'})));}catch(error){await caches.delete(CACHE);throw error;}})()));
 self.addEventListener('activate',event=>event.waitUntil((async()=>{await Promise.all((await caches.keys()).filter(key=>key.startsWith('whole-board-shell-')&&key!==CACHE).map(key=>caches.delete(key)));await self.clients.claim();})()));
 self.addEventListener('message',event=>{if(event.data?.type==='SKIP_WAITING')self.skipWaiting();});

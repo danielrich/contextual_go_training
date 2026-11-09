@@ -29,7 +29,7 @@ fn score_tolerance_and_winner_match_original_flow() {
         true
     );
     assert_eq!(
-        grade::grade(&p, "score", &json!(-1.)).unwrap()["correct"],
+        grade::grade(&p, "score", &json!(-2.)).unwrap()["correct"],
         true
     );
 }
@@ -64,4 +64,26 @@ fn mean_rank_handles_unicode_unknown_and_kyu_dan_boundary() {
     assert_eq!(mean_rank("初段", "10k"), "Unknown");
     assert_eq!(mean_rank("10k", "7k"), "8k");
     assert_eq!(mean_rank("1k", "1d"), "1d");
+}
+#[test]
+fn score_tolerance_is_two_points_or_twenty_percent() {
+    let mut p = problem();
+    p.analysis.score = 30.;
+    let f = grade::grade(&p, "score", &json!(24.)).unwrap();
+    assert_eq!(f["correct"], true);
+    assert_eq!(f["error"], 6.);
+    assert_eq!(f["tolerance"], 6.);
+    assert_eq!(
+        grade::grade(&p, "score", &json!(23.99)).unwrap()["correct"],
+        false
+    );
+    p.analysis.score = 0.;
+    assert_eq!(
+        grade::grade(&p, "score", &json!(2.)).unwrap()["correct"],
+        true
+    );
+    assert_eq!(
+        grade::grade(&p, "score", &json!(2.01)).unwrap()["correct"],
+        false
+    );
 }

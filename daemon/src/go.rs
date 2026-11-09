@@ -116,6 +116,9 @@ pub fn last_playable_turn(g: &Game) -> usize {
     g.moves.len()
 }
 pub fn replay(g: &Game, turn: usize) -> Result<Board> {
+    Ok(replay_with_captures(g, turn)?.0)
+}
+pub fn replay_with_captures(g: &Game, turn: usize) -> Result<(Board, crate::model::Captures)> {
     if ![9, 13, 19].contains(&g.size) || turn > g.moves.len() {
         return Err("Unsupported board or turn".into());
     }
@@ -132,15 +135,21 @@ pub fn replay(g: &Game, turn: usize) -> Result<Board> {
         };
     }
     let suicide = matches!(g.rules.as_str(), "new-zealand" | "tromp-taylor" | "nz");
+    let mut captures = crate::model::Captures::default();
+    let count = |board: &Board, color| board.iter().flatten().filter(|v| **v == color).count();
     let mut expected = g.initial_player.clone();
     for [color, v] in g.moves.iter().take(turn) {
         if color != &expected {
             return Err("Non-alternating move sequence".into());
         }
+        let black = count(&b, 1);
+        let white = count(&b, 2);
         b = play(&b, color, v, suicide)?;
+        captures.black += white + usize::from(v != "pass" && color == "W") - count(&b, 2);
+        captures.white += black + usize::from(v != "pass" && color == "B") - count(&b, 1);
         expected = if color == "B" { "W".into() } else { "B".into() };
     }
-    Ok(b)
+    Ok((b, captures))
 }
 pub fn groups(board: &Board) -> Vec<Group> {
     let mut seen = HashSet::new();

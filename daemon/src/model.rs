@@ -73,11 +73,18 @@ pub struct Analysis {
     pub suggestions: Vec<MoveEval>,
     pub complete: bool,
 }
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct Captures {
+    pub black: usize,
+    pub white: usize,
+}
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Problem {
     pub id: String,
     pub size: usize,
     pub board: Board,
+    #[serde(default)]
+    pub captures: Option<Captures>,
     pub turn: usize,
     pub to_play: String,
     pub komi: f64,
@@ -169,5 +176,15 @@ pub fn mean_rank(black: &str, white: &str) -> String {
             }
         }
         _ => "Unknown".into(),
+    }
+}
+
+impl StoredProblem {
+    pub fn with_captures(mut self) -> Result<Self> {
+        if self.problem.captures.is_none() {
+            self.problem.captures =
+                Some(crate::go::replay_with_captures(&self.game, self.problem.turn)?.1);
+        }
+        Ok(self)
     }
 }

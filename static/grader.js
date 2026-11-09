@@ -1,12 +1,12 @@
 // This version is part of every immutable problem and must match daemon/src/grade.rs.
-export const GRADER_VERSION='whole-board-grader-v2';
+export const GRADER_VERSION='whole-board-grader-v3';
 export const STAGES=['winner','score','groups','candidates'];
 const round=v=>Math.sign(v)*Math.round(Math.abs(v)*10)/10;
 export const candidateLoss=(baseline,candidate,player)=>Math.max(0,(baseline-candidate)*(player==='B'?1:-1));
 export function validCompleteProblem(p){
  if(!p||![9,13,19].includes(p.size)||!p.id||!['B','W'].includes(p.to_play))return false;
  if(!Array.isArray(p.board)||p.board.length!==p.size||p.board.some(r=>!Array.isArray(r)||r.length!==p.size||r.some(v=>![0,1,2].includes(v))))return false;
- const a=p.analysis;if(!a?.complete||![GRADER_VERSION,'whole-board-grader-v1'].includes(a.grader_version)||!Number.isFinite(a.score)||!a.model||!(a.visits>0))return false;
+ const a=p.analysis;if(!a?.complete||![GRADER_VERSION,'whole-board-grader-v1','whole-board-grader-v2'].includes(a.grader_version)||!Number.isFinite(a.score)||!a.model||!(a.visits>0))return false;
  if(!Array.isArray(a.ownership)||a.ownership.length!==p.size*p.size||a.ownership.some(v=>!Number.isFinite(v)))return false;
  if(!Array.isArray(p.legal_moves)||!p.legal_moves.length||new Set(p.legal_moves).size!==p.legal_moves.length)return false;
  if(!Array.isArray(p.groups)||p.groups.some(g=>!['B','W'].includes(g.color)||!Array.isArray(g.stones)||!g.stones.length||g.stones.some(s=>!Array.isArray(s)||s.length!==2||s.some(v=>!Number.isInteger(v)||v<0||v>=p.size))))return false;
@@ -14,7 +14,7 @@ export function validCompleteProblem(p){
 }
 export function groupStatus(p,g){const values=g.stones.map(([x,y])=>p.analysis.ownership[y*p.size+x]*(g.color==='B'?1:-1));return values.every(v=>v>=.9)?'secure-looking':values.every(v=>v<=-.7)?'at-risk':'uncertain';}
 export function grade(p,stage,answer){
- if(![GRADER_VERSION,'whole-board-grader-v1'].includes(p.analysis.grader_version))throw new Error('This problem needs an app update before local grading.');
+ if(![GRADER_VERSION,'whole-board-grader-v1','whole-board-grader-v2'].includes(p.analysis.grader_version))throw new Error('This problem needs an app update before local grading.');
  const index=STAGES.indexOf(stage);if(index<0)throw new Error('Unknown question');
  const f={stage,next_stage:STAGES[index+1]??null,pending:false,grader_version:GRADER_VERSION},score=p.analysis.score;
  if(stage==='winner'){
@@ -22,7 +22,7 @@ export function grade(p,stage,answer){
   f.expected=Math.abs(score)<=2?'even':score>0?'B':'W';f.correct=answer===f.expected;f.message='Close means within 2 estimated points. Commit to your count before seeing the score.';
  }else if(stage==='score'){
   if(typeof answer!=='number'||!Number.isFinite(answer)||Math.abs(answer)>p.size*p.size+400)throw new Error('Enter a finite score estimate');
-  f.correct=Math.abs(answer-score)<=3;f.score=round(score);f.error=round(Math.abs(answer-score));f.message='KataGo estimates the final lead with strong play, including komi. Within 3 points earns credit; this is not simply settled territory.';
+  f.tolerance=Math.max(2,Math.abs(score)*.2);f.error=Math.abs(answer-score);f.correct=f.error<=f.tolerance;f.score=round(score);f.message='KataGo estimates the final lead with strong play, including komi. Within 2 points or 20% of the estimated lead earns credit. This is not simply settled territory.';
  }else if(stage==='groups'){
   if(!answer||typeof answer!=='object'||Array.isArray(answer))throw new Error('Assess each marked group');
   f.groups=p.groups.map(g=>{const a=answer[g.id];if(!['secure-looking','at-risk','uncertain'].includes(a))throw new Error('Assess each marked group');const expected=groupStatus(p,g);return{id:g.id,anchor:g.anchor,expected,answer:a,correct:a===expected};});
